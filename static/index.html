@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cutout — product photos on transparent PNG</title>
+<style>
+  :root {
+    --bg: #eef1f4; --ink: #14202b; --muted: #5b6773; --line: #cfd6dd;
+    --accent: #2f5bff; --accent-ink: #fff; --card: #fff;
+    --c1: #f4f6f8; --c2: #e1e6ea; --danger: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11161b; --ink: #e8edf1; --muted: #93a0ac; --line: #2c3742;
+      --card: #182028; --c1: #1f2831; --c2: #252f39; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 "Avenir Next", "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 40px 20px 64px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+  p.sub { margin: 0 0 28px; color: var(--muted); max-width: 60ch; }
+
+  #drop { border: 2px dashed var(--line); border-radius: 14px; background: var(--card);
+    padding: 40px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+  #drop:hover, #drop:focus-visible, #drop.over { border-color: var(--accent); outline: none; }
+  #drop strong { display: block; font-size: 1.1rem; }
+  #drop span { color: var(--muted); font-size: .9rem; }
+  .opts { margin: 14px 2px 0; color: var(--muted); font-size: .9rem; display: flex; gap: 20px; flex-wrap: wrap; }
+  .opts label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+
+  #results { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px; margin-top: 28px; }
+  .item { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .stage { aspect-ratio: 1; display: grid; place-items: center; padding: 10px;
+    background-color: var(--c1);
+    background-image: linear-gradient(45deg, var(--c2) 25%, transparent 25%, transparent 75%, var(--c2) 75%),
+                      linear-gradient(45deg, var(--c2) 25%, transparent 25%, transparent 75%, var(--c2) 75%);
+    background-size: 20px 20px; background-position: 0 0, 10px 10px; }
+  .stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .stage.busy img { opacity: .35; }
+  .meta { padding: 10px 12px; font-size: .9rem; }
+  .meta .name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 6px; color: var(--muted); }
+  .status { color: var(--muted); }
+  .status.err { color: var(--danger); white-space: pre-wrap; }
+  .actions { display: flex; gap: 8px; }
+  a.btn, button.btn { background: var(--accent); color: var(--accent-ink); text-decoration: none; padding: 6px 12px;
+    border: none; border-radius: 8px; font-weight: 600; white-space: nowrap; font-size: .9rem; cursor: pointer; }
+  button.btn.secondary { background: var(--c2); color: var(--ink); }
+  a.btn:focus-visible, button.btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+  /* Editor overlay */
+  #editor { position: fixed; inset: 0; background: rgba(10,14,18,.92); z-index: 50;
+    display: none; flex-direction: column; align-items: center; }
+  #editor.open { display: flex; }
+  #editor-canvas-wrap { flex: 1; width: 100%; overflow: auto; display: flex;
+    align-items: center; justify-content: center; padding: 16px; touch-action: none; }
+  #editor-canvas-wrap.zoomed { align-items: flex-start; justify-content: flex-start; }
+  #editor-stage { position: relative; line-height: 0;
+    background-color: var(--c1);
+    background-image: linear-gradient(45deg, var(--c2) 25%, transparent 25%, transparent 75%, var(--c2) 75%),
+                      linear-gradient(45deg, var(--c2) 25%, transparent 25%, transparent 75%, var(--c2) 75%);
+    background-size: 20px 20px; background-position: 0 0, 10px 10px; }
+  #editor-canvas { display: block; touch-action: none; cursor: none; }
+  #brush-cursor { position: fixed; pointer-events: none; border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6); border-radius: 50%; transform: translate(-50%, -50%);
+    display: none; z-index: 60; mix-blend-mode: difference; }
+
+  #editor-bar { width: 100%; background: var(--card); border-top: 1px solid var(--line);
+    padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+    justify-content: center; }
+  #editor-bar .grp { display: flex; align-items: center; gap: 8px; }
+  #editor-bar .grp span.lbl { font-size: .8rem; color: var(--muted); }
+  .toggle { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .toggle button { border: none; background: var(--card); color: var(--ink); padding: 6px 12px;
+    font-size: .85rem; cursor: pointer; font-weight: 600; }
+  .toggle button.active { background: var(--accent); color: var(--accent-ink); }
+  input[type="range"] { width: 110px; }
+  #editor-top { width: 100%; display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; color: #cfd6dd; font-size: .95rem; }
+  #editor-top button { background: transparent; border: 1px solid #46525d; color: #e8edf1;
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: .85rem; }
+  #editor-top button:disabled { opacity: .4; cursor: default; }
+  .icon-btn { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cutout</h1>
+  <p class="sub">Drop product photos and get transparent PNGs back, with the background removed. Use the pen afterward to touch up any edges by hand.</p>
+
+  <div id="drop" tabindex="0" role="button" aria-label="Choose images">
+    <strong>Drop images here or click to choose</strong>
+    <span>JPG, PNG or WebP, up to 15 MB each</span>
+  </div>
+  <input id="file" type="file" accept="image/*" multiple hidden>
+  <div class="opts">
+    <label><input type="checkbox" id="trim" checked> Trim empty space around the product</label>
+    <label><input type="checkbox" id="refine"> Sharper edges (slower)</label>
+  </div>
+
+  <section id="results" aria-live="polite"></section>
+</main>
+
+<!-- Manual touch-up editor -->
+<div id="editor">
+  <div id="editor-top">
+    <div class="grp">
+      <button id="ed-undo" class="icon-btn" title="Undo last stroke">↶ Undo</button>
+      <button id="ed-reset" class="icon-btn" title="Revert to the auto result">Reset</button>
+    </div>
+    <strong id="ed-title" style="font-size:.9rem;"></strong>
+    <div class="grp">
+      <button id="ed-cancel">Cancel</button>
+      <button id="ed-apply" class="btn">Apply &amp; Download</button>
+    </div>
+  </div>
+  <div id="editor-canvas-wrap">
+    <div id="editor-stage">
+      <canvas id="editor-canvas"></canvas>
+    </div>
+  </div>
+  <div id="editor-bar">
+    <div class="grp toggle" role="group" aria-label="Brush mode">
+      <button id="mode-erase" class="active">✂ Erase</button>
+      <button id="mode-restore">↩ Restore</button>
+    </div>
+    <div class="grp">
+      <span class="lbl">Brush size</span>
+      <input type="range" id="brush-size" min="4" max="140" value="30">
+    </div>
+    <div class="grp">
+      <span class="lbl">Zoom</span>
+      <button id="zoom-out">−</button>
+      <span id="zoom-label" style="font-size:.85rem; min-width:38px; text-align:center;">100%</span>
+      <button id="zoom-in">+</button>
+    </div>
+  </div>
+</div>
+<div id="brush-cursor"></div>
+
+<script>
+const drop = document.getElementById('drop');
+const input = document.getElementById('file');
+const results = document.getElementById('results');
+const trim = document.getElementById('trim');
+const refine = document.getElementById('refine');
+
+drop.addEventListener('click', () => input.click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => handle(e.dataTransfer.files));
+input.addEventListener('change', () => { handle(input.files); input.value = ''; });
+
+let queue = Promise.resolve();
+
+function handle(files) {
+  for (const f of files) {
+    if (!f.type.startsWith('image/')) continue;
+    const card = makeCard(f);
+    queue = queue.then(() => process(f, card));
+  }
+}
+
+function makeCard(file) {
+  const el = document.createElement('div');
+  el.className = 'item';
+  el.innerHTML = `<div class="stage busy"><img alt=""></div>
+    <div class="meta"><span class="name"></span><span class="status">Waiting…</span></div>`;
+  el.querySelector('img').src = URL.createObjectURL(file);
+  el.querySelector('.name').textContent = file.name;
+  results.prepend(el);
+  return el;
+}
+
+async function readErrorMessage(res) {
+  let message = `Processing failed (HTTP ${res.status})`;
+  try {
+    const text = await res.text();
+    if (text) {
+      try {
+        const data = JSON.parse(text);
+        message = data.detail || message;
+      } catch (_) {
+        message = text.slice(0, 300);
+      }
+    }
+  } catch (_) { /* keep default message */ }
+  return message;
+}
+
+async function process(file, card) {
+  const status = card.querySelector('.status');
+  status.textContent = 'Removing background…';
+  const body = new FormData();
+  body.append('file', file);
+  const qs = new URLSearchParams({ trim: trim.checked, refine: refine.checked });
+  try {
+    const res = await fetch('/remove?' + qs.toString(), { method: 'POST', body });
+    if (!res.ok) throw new Error(await readErrorMessage(res));
+    const blob = await res.blob();
+    if (!blob || blob.size === 0) throw new Error('Server returned an empty image.');
+
+    const url = URL.createObjectURL(blob);
+    card.querySelector('img').src = url;
+    card.querySelector('.stage').classList.remove('busy');
+
+    const baseName = file.name.replace(/\.[^.]+$/, '') + '.png';
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn secondary';
+    editBtn.textContent = '✎ Touch up';
+    const dlLink = document.createElement('a');
+    dlLink.className = 'btn';
+    dlLink.href = url;
+    dlLink.download = baseName;
+    dlLink.textContent = 'Download';
+    actions.append(editBtn, dlLink);
+    status.replaceWith(actions);
+
+    editBtn.addEventListener('click', () => openEditor({
+      blob, name: baseName,
+      onSave: (newBlob) => {
+        const newUrl = URL.createObjectURL(newBlob);
+        card.querySelector('img').src = newUrl;
+        dlLink.href = newUrl;
+      }
+    }));
+  } catch (err) {
+    status.textContent = err.message || 'Something went wrong.';
+    status.classList.add('err');
+  }
+}
+
+/* ---------------- Manual touch-up editor ---------------- */
+
+const editor = document.getElementById('editor');
+const wrap = document.getElementById('editor-canvas-wrap');
+const canvas = document.getElementById('editor-canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const cursor = document.getElementById('brush-cursor');
+const titleEl = document.getElementById('ed-title');
+const brushSize = document.getElementById('brush-size');
+const modeEraseBtn = document.getElementById('mode-erase');
+const modeRestoreBtn = document.getElementById('mode-restore');
+const undoBtn = document.getElementById('ed-undo');
+const resetBtn = document.getElementById('ed-reset');
+const cancelBtn = document.getElementById('ed-cancel');
+const applyBtn = document.getElementById('ed-apply');
+const zoomInBtn = document.getElementById('zoom-in');
+const zoomOutBtn = document.getElementById('zoom-out');
+const zoomLabel = document.getElementById('zoom-label');
+
+let baseline = null;
+let undoStack = [];
+let mode = 'erase';
+let zoom = 1;
+let drawing = false;
+let strokeSaved = false;
+let currentCallback = null;
+
+function openEditor({ blob, name, onSave }) {
+  const img = new Image();
+  img.onload = () => {
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+    baseline = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    undoStack = [];
+    zoom = 1;
+    applyZoom();
+    titleEl.textContent = name;
+    currentCallback = onSave;
+    editor.classList.add('open');
+    updateUndoState();
+  };
+  img.src = URL.createObjectURL(blob);
+}
+
+function closeEditor() {
+  editor.classList.remove('open');
+  cursor.style.display = 'none';
+  currentCallback = null;
+}
+
+function applyZoom() {
+  canvas.style.width = (canvas.width * zoom) + 'px';
+  canvas.style.height = (canvas.height * zoom) + 'px';
+  wrap.classList.toggle('zoomed', zoom > 1);
+  zoomLabel.textContent = Math.round(zoom * 100) + '%';
+}
+zoomInBtn.addEventListener('click', () => { zoom = Math.min(zoom * 1.5, 8); applyZoom(); });
+zoomOutBtn.addEventListener('click', () => { zoom = Math.max(zoom / 1.5, 0.25); applyZoom(); });
+
+modeEraseBtn.addEventListener('click', () => setMode('erase'));
+modeRestoreBtn.addEventListener('click', () => setMode('restore'));
+function setMode(m) {
+  mode = m;
+  modeEraseBtn.classList.toggle('active', m === 'erase');
+  modeRestoreBtn.classList.toggle('active', m === 'restore');
+}
+
+function updateUndoState() { undoBtn.disabled = undoStack.length === 0; }
+
+undoBtn.addEventListener('click', () => {
+  const snap = undoStack.pop();
+  if (snap) { ctx.putImageData(snap, 0, 0); updateUndoState(); }
+});
+resetBtn.addEventListener('click', () => {
+  if (!baseline) return;
+  undoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+  ctx.putImageData(baseline, 0, 0);
+  updateUndoState();
+});
+cancelBtn.addEventListener('click', closeEditor);
+applyBtn.addEventListener('click', () => {
+  canvas.toBlob(blob => {
+    if (currentCallback) currentCallback(blob);
+    closeEditor();
+  }, 'image/png');
+});
+
+function canvasPointFromEvent(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+}
+
+function radiusInCanvasPx() {
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas.width / rect.width;
+  return (parseFloat(brushSize.value) / 2) * scale;
+}
+
+function paintAt(x, y) {
+  const r = radiusInCanvasPx();
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.closePath();
+  if (mode === 'erase') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fill();
+  } else {
+    ctx.clip();
+    ctx.globalCompositeOperation = 'source-over';
+    const tmp = document.createElement('canvas');
+    tmp.width = canvas.width; tmp.height = canvas.height;
+    tmp.getContext('2d').putImageData(baseline, 0, 0);
+    ctx.drawImage(tmp, 0, 0);
+  }
+  ctx.restore();
+}
+
+function strokeStart(e) {
+  drawing = true;
+  strokeSaved = false;
+  canvas.setPointerCapture(e.pointerId);
+  const p = canvasPointFromEvent(e);
+  if (!strokeSaved) { undoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height)); strokeSaved = true; updateUndoState(); }
+  paintAt(p.x, p.y);
+}
+function strokeMove(e) {
+  moveCursor(e);
+  if (!drawing) return;
+  const p = canvasPointFromEvent(e);
+  paintAt(p.x, p.y);
+}
+function strokeEnd(e) {
+  drawing = false;
+  try { canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+}
+function moveCursor(e) {
+  cursor.style.display = 'block';
+  cursor.style.left = e.clientX + 'px';
+  cursor.style.top = e.clientY + 'px';
+  const rect = canvas.getBoundingClientRect();
+  const displayR = (parseFloat(brushSize.value) / 2) * (rect.width / canvas.width);
+  cursor.style.width = (displayR * 2) + 'px';
+  cursor.style.height = (displayR * 2) + 'px';
+}
+
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); strokeStart(e); });
+canvas.addEventListener('pointermove', e => { e.preventDefault(); strokeMove(e); });
+canvas.addEventListener('pointerup', e => { e.preventDefault(); strokeEnd(e); });
+canvas.addEventListener('pointercancel', strokeEnd);
+canvas.addEventListener('pointerleave', () => { cursor.style.display = 'none'; });
+canvas.addEventListener('pointerenter', () => { cursor.style.display = 'block'; });
+
+document.addEventListener('keydown', e => {
+  if (!editor.classList.contains('open')) return;
+  if (e.key === 'Escape') closeEditor();
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') undoBtn.click();
+});
+</script>
+</body>
+</html>
